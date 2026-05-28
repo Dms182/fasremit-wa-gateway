@@ -1,8 +1,6 @@
 FROM ghcr.io/puppeteer/puppeteer:latest
 
-# Set environment variables for Puppeteer
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+# Set environment variables
 ENV PORT=7860
 
 # Set working directory inside home folder of pptruser (writable by default)
