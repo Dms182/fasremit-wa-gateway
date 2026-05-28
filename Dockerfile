@@ -13,9 +13,11 @@ COPY --chown=pptruser:pptruser package*.json ./
 # Install npm dependencies
 RUN npm install
 
+# Download the exact Chrome version expected by puppeteer-core at build time
+RUN npx puppeteer browsers install chrome@146.0.7680.31
+
 # Copy application files
 COPY --chown=pptruser:pptruser . .
-
 
 # Expose port (Hugging Face Spaces expects 7860, Render uses PORT)
 EXPOSE 7860
