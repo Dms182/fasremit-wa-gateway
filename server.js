@@ -108,7 +108,19 @@ async function _doInit() {
         } catch (e) {}
       }
       fs.mkdirSync(cacheDir, { recursive: true });
-      execSync('npx puppeteer browsers install chrome', {
+
+      // Get exact version expected by local puppeteer-core to avoid mismatches
+      let expectedVersion = 'chrome';
+      try {
+        const revisions = require('puppeteer-core/lib/cjs/puppeteer/revisions.js');
+        const rev = revisions.PUPPETEER_REVISIONS.chrome;
+        if (rev) expectedVersion = `chrome@${rev}`;
+      } catch (e) {
+        console.warn('[WA] Could not read expected Chrome revision, installing latest...');
+      }
+
+      console.log(`[WA] Running: npx puppeteer browsers install ${expectedVersion}`);
+      execSync(`npx puppeteer browsers install ${expectedVersion}`, {
         env: { ...process.env, PUPPETEER_CACHE_DIR: cacheDir },
         stdio: 'inherit'
       });
