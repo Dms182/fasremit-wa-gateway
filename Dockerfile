@@ -1,4 +1,4 @@
-FROM node:18-slim
+FROM node:18
 
 # Set environment variables
 ENV PORT=7860
@@ -9,7 +9,7 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install npm dependencies
+# Install npm dependencies (full node image has git pre-installed)
 RUN npm install
 
 # Copy application files
