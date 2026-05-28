@@ -75,8 +75,12 @@ async function initWAClient() {
     
     sock = makeWASocket({
       auth: state,
-      logger: pino({ level: 'silent' }),
+      logger: pino({ level: 'debug' }), // Set to debug to capture exact details in Hugging Face Logs
       printQRInTerminal: false,
+      connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 60000,
+      keepAliveIntervalMs: 30000,
+      emitOwnEvents: false,
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -95,19 +99,25 @@ async function initWAClient() {
       }
 
       if (connection === 'close') {
-        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const error = lastDisconnect?.error;
+        const statusCode = error?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-        console.log(`[WA] Connection closed. Status code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
+        console.error('[WA] Connection closed!', {
+          message: error?.message,
+          statusCode: statusCode,
+          shouldReconnect: shouldReconnect,
+          stack: error?.stack
+        });
         
         updateState({ status: 'DISCONNECTED', qrCode: null, phoneNumber: null, connectedAt: null });
         sock = null;
         isInitializing = false;
 
         if (shouldReconnect) {
-          // Re-initialize socket
+          // Re-initialize socket after a short delay
           setTimeout(() => {
             initWAClient().catch(err => console.error('[WA] Reconnect error:', err));
-          }, 3000);
+          }, 5000);
         } else {
           // Logged out: clean up session
           console.log('[WA] User logged out. Clearing session directory...');
