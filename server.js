@@ -101,7 +101,7 @@ async function _doInit() {
     const chromePath = findChromeExecutable(cacheDir);
     if (!chromePath) {
       console.log('[WA] Chrome executable not found in cache. Clean installing Chrome at runtime...');
-      const { execSync } = require('child_process');
+      
       if (fs.existsSync(cacheDir)) {
         try {
           fs.rmSync(cacheDir, { recursive: true, force: true });
@@ -110,19 +110,21 @@ async function _doInit() {
       fs.mkdirSync(cacheDir, { recursive: true });
 
       // Get exact version expected by local puppeteer-core to avoid mismatches
-      let expectedVersion = 'chrome';
+      let expectedVersion = '146.0.7680.31';
       try {
         const revisions = require('puppeteer-core/lib/cjs/puppeteer/revisions.js');
         const rev = revisions.PUPPETEER_REVISIONS.chrome;
-        if (rev) expectedVersion = `chrome@${rev}`;
+        if (rev) expectedVersion = rev;
       } catch (e) {
-        console.warn('[WA] Could not read expected Chrome revision, installing latest...');
+        console.warn('[WA] Could not read expected Chrome revision, installing default...');
       }
 
-      console.log(`[WA] Running: npx puppeteer browsers install ${expectedVersion}`);
-      execSync(`npx puppeteer browsers install ${expectedVersion}`, {
-        env: { ...process.env, PUPPETEER_CACHE_DIR: cacheDir },
-        stdio: 'inherit'
+      console.log(`[WA] Downloading Chrome buildId: ${expectedVersion} via @puppeteer/browsers...`);
+      const { install, Browser } = require('@puppeteer/browsers');
+      await install({
+        browser: Browser.CHROME,
+        buildId: expectedVersion,
+        cacheDir: cacheDir,
       });
       console.log('[WA] Chrome installation completed successfully!');
     } else {
