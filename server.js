@@ -74,6 +74,22 @@ async function _doInit() {
     updateState({ status: 'INITIALIZING', qrCode: null });
     console.log('[WA] Initializing client...');
 
+    // Ensure Chrome is installed in the cache at runtime (fixes Hugging Face mount/discard cache issues)
+    const cacheDir = process.env.PUPPETEER_CACHE_DIR || path.join(__dirname, '.puppeteer-cache');
+    const chromeDir = path.join(cacheDir, 'chrome');
+    if (!fs.existsSync(chromeDir) || !fs.existsSync(cacheDir) || fs.readdirSync(cacheDir).length === 0) {
+      console.log('[WA] Chrome not found in cache. Installing Chrome at runtime...');
+      const { execSync } = require('child_process');
+      if (!fs.existsSync(cacheDir)) {
+        fs.mkdirSync(cacheDir, { recursive: true });
+      }
+      execSync('npx puppeteer browsers install chrome', {
+        env: { ...process.env, PUPPETEER_CACHE_DIR: cacheDir },
+        stdio: 'inherit'
+      });
+      console.log('[WA] Chrome installation completed successfully!');
+    }
+
     if (!fs.existsSync(SESSION_DIR)) {
       fs.mkdirSync(SESSION_DIR, { recursive: true });
     }
