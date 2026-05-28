@@ -1,8 +1,8 @@
 FROM ghcr.io/puppeteer/puppeteer:latest
 
-# Set environment variables (using /tmp to prevent volume mount and home dir mismatches)
+# Set environment variables (using /home/pptruser/.cache/puppeteer which is preserved at runtime)
 ENV PORT=7860
-ENV PUPPETEER_CACHE_DIR=/tmp/.puppeteer-cache
+ENV PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer
 
 # Set working directory inside home folder of pptruser (writable by default)
 WORKDIR /home/pptruser/app
@@ -14,7 +14,7 @@ COPY --chown=pptruser:pptruser package*.json ./
 RUN npm install
 
 # Download the exact Chrome version expected by puppeteer-core at build time (clearing cache first if any)
-RUN rm -rf /tmp/.puppeteer-cache && npx puppeteer browsers install chrome@146.0.7680.31
+RUN rm -rf /home/pptruser/.cache/puppeteer && npx puppeteer browsers install chrome@146.0.7680.31
 
 # Copy application files
 COPY --chown=pptruser:pptruser . .
