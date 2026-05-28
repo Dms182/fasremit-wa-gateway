@@ -1,3 +1,12 @@
+---
+title: Fasremit WA Gateway
+emoji: 💬
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+---
+
 # Fasremit WA Gateway
 
 Server Express.js yang menjalankan `whatsapp-web.js` + Puppeteer sebagai WA Gateway backend.
