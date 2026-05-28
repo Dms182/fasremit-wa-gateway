@@ -12,8 +12,8 @@ COPY --chown=pptruser:pptruser package*.json ./
 # Install npm dependencies
 RUN npm install
 
-# Install Chrome browser matching the puppeteer version
-RUN npx puppeteer browsers install chrome
+# Install Chrome browser matching the puppeteer version (clearing cache first to prevent missing executable errors)
+RUN rm -rf /home/pptruser/.cache/puppeteer && npx puppeteer browsers install chrome
 
 # Copy application files
 COPY --chown=pptruser:pptruser . .
