@@ -16,8 +16,8 @@ RUN npm install
 # Copy application files
 COPY --chown=pptruser:pptruser . .
 
-# Expose port (Render will inject PORT env var, Express server uses process.env.PORT)
-EXPOSE 3001
+# Expose port (Hugging Face Spaces expects 7860, Render uses PORT)
+EXPOSE 7860
 
 # Start the application
 CMD ["node", "server.js"]
