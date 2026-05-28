@@ -2,6 +2,7 @@ FROM ghcr.io/puppeteer/puppeteer:latest
 
 # Set environment variables
 ENV PORT=7860
+ENV PUPPETEER_CACHE_DIR=/home/pptruser/app/.puppeteer-cache
 
 # Set working directory inside home folder of pptruser (writable by default)
 WORKDIR /home/pptruser/app
@@ -12,11 +13,11 @@ COPY --chown=pptruser:pptruser package*.json ./
 # Install npm dependencies
 RUN npm install
 
-# Install Chrome browser matching the puppeteer version (clearing cache first to prevent missing executable errors)
-RUN rm -rf /home/pptruser/.cache/puppeteer && npx puppeteer browsers install chrome
-
 # Copy application files
 COPY --chown=pptruser:pptruser . .
+
+# Install Chrome browser matching the puppeteer version inside the app workdir cache
+RUN npx puppeteer browsers install chrome
 
 # Expose port (Hugging Face Spaces expects 7860, Render uses PORT)
 EXPOSE 7860
