@@ -1,7 +1,7 @@
 {
   "name": "fasremit-wa-gateway",
   "version": "1.0.0",
-  "description": "WhatsApp Gateway Server for Fasremit CRM (Railway deployment)",
+  "description": "WhatsApp Gateway Server for Fasremit CRM (Baileys direct WebSocket edition)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,7 +11,8 @@
     "express": "^4.18.2",
     "cors": "^2.8.5",
     "qrcode": "^1.5.4",
-    "whatsapp-web.js": "^1.34.7"
+    "@whiskeysockets/baileys": "^6.6.0",
+    "pino": "^8.19.0"
   },
   "engines": {
     "node": ">=18.0.0"

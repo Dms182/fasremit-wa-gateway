@@ -1,7 +1,7 @@
 /**
- * Fasremit WA Gateway Server
- * Express.js server with whatsapp-web.js + Puppeteer
- * Deploy this to Railway — Vercel CRM will call this as a backend.
+ * Fasremit WA Gateway Server (Baileys Edition)
+ * Express.js server utilizing @whiskeysockets/baileys.
+ * Runs directly on pure Node.js without requiring Puppeteer/Chromium.
  *
  * Endpoints:
  *   GET  /status       — WA connection status + QR code
@@ -13,24 +13,25 @@
 
 const express = require('express');
 const cors = require('cors');
-const { Client, LocalAuth } = require('whatsapp-web.js');
 const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
+const pino = require('pino');
+const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 
-const app = express();
+const appInstance = express();
 const PORT = process.env.PORT || 3001;
 
-// Secret token for basic auth (set WA_SECRET in Railway env vars)
+// Secret token for basic auth (set WA_SECRET in env vars)
 const WA_SECRET = process.env.WA_SECRET || '';
 
 // ─── CORS ──────────────────────────────────────────────────────────────────
-app.use(cors({
-  origin: '*', // Restrict to your Vercel domain in production via env var
+appInstance.use(cors({
+  origin: '*',
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-wa-secret'],
 }));
-app.use(express.json());
+appInstance.use(express.json());
 
 // ─── Auth Middleware ────────────────────────────────────────────────────────
 function authMiddleware(req, res, next) {
@@ -52,171 +53,97 @@ let waState = {
   lastSeen: null,
 };
 
-let waClient = null;
-let initPromise = null;
-const SESSION_DIR = path.join(__dirname, 'wa-session');
+let sock = null;
+let isInitializing = false;
+const SESSION_DIR = path.join(__dirname, 'baileys-session');
 
 function updateState(partial) {
   waState = { ...waState, ...partial };
 }
 
-// ─── WA Init ────────────────────────────────────────────────────────────────
+// ─── WA Init (Baileys) ──────────────────────────────────────────────────────
 async function initWAClient() {
-  if (waState.status === 'CONNECTED' && waClient) return;
-  if (initPromise) return initPromise;
+  if (waState.status === 'CONNECTED' && sock) return;
+  if (isInitializing) return;
 
-  initPromise = _doInit().finally(() => { initPromise = null; });
-  return initPromise;
-}
+  isInitializing = true;
+  updateState({ status: 'INITIALIZING', qrCode: null });
+  console.log('[WA] Initializing Baileys socket...');
 
-async function _doInit() {
   try {
-    updateState({ status: 'INITIALIZING', qrCode: null });
-    console.log('[WA] Initializing client...');
-
-    // Ensure Chrome is installed in the cache at runtime (fixes Hugging Face mount/discard cache issues)
-    const cacheDir = process.env.PUPPETEER_CACHE_DIR || path.join(__dirname, '.puppeteer-cache');
+    const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     
-    // Recursive search for "chrome" binary to verify it actually exists and is complete
-    function findChromeExecutable(dir) {
-      if (!fs.existsSync(dir)) return null;
-      const files = fs.readdirSync(dir);
-      for (const file of files) {
-        const fullPath = path.join(dir, file);
+    sock = makeWASocket({
+      auth: state,
+      logger: pino({ level: 'silent' }),
+      printQRInTerminal: false,
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
         try {
-          const stat = fs.statSync(fullPath);
-          if (stat.isDirectory()) {
-            const found = findChromeExecutable(fullPath);
-            if (found) return found;
-          } else if (file === 'chrome' || file === 'chrome.exe') {
-            return fullPath;
-          }
+          const qrDataUrl = await QRCode.toDataURL(qr);
+          updateState({ status: 'QR_PENDING', qrCode: qrDataUrl });
+          console.log('[WA] QR Code generated — awaiting scan');
         } catch (e) {
-          // Ignore permission/read errors for specific files
+          updateState({ status: 'QR_PENDING', qrCode: null });
         }
       }
-      return null;
-    }
 
-    const chromePath = findChromeExecutable(cacheDir);
-    if (!chromePath) {
-      console.log('[WA] Chrome executable not found in cache. Clean installing Chrome at runtime...');
-      
-      if (fs.existsSync(cacheDir)) {
-        try {
-          fs.rmSync(cacheDir, { recursive: true, force: true });
-        } catch (e) {}
-      }
-      fs.mkdirSync(cacheDir, { recursive: true });
+      if (connection === 'close') {
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        console.log(`[WA] Connection closed. Status code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
+        
+        updateState({ status: 'DISCONNECTED', qrCode: null, phoneNumber: null, connectedAt: null });
+        sock = null;
+        isInitializing = false;
 
-      // Get exact version expected by local puppeteer-core to avoid mismatches
-      let expectedVersion = '146.0.7680.31';
-      try {
-        const revisions = require('puppeteer-core/lib/cjs/puppeteer/revisions.js');
-        const rev = revisions.PUPPETEER_REVISIONS.chrome;
-        if (rev) expectedVersion = rev;
-      } catch (e) {
-        console.warn('[WA] Could not read expected Chrome revision, installing default...');
-      }
-
-      console.log(`[WA] Downloading Chrome buildId: ${expectedVersion} via @puppeteer/browsers...`);
-      const { install, Browser } = require('@puppeteer/browsers');
-      await install({
-        browser: Browser.CHROME,
-        buildId: expectedVersion,
-        cacheDir: cacheDir,
-      });
-      console.log('[WA] Chrome installation completed successfully!');
-    } else {
-      console.log('[WA] Found Chrome executable in cache at:', chromePath);
-    }
-
-    if (!fs.existsSync(SESSION_DIR)) {
-      fs.mkdirSync(SESSION_DIR, { recursive: true });
-    }
-
-    waClient = new Client({
-      authStrategy: new LocalAuth({
-        dataPath: SESSION_DIR,
-        clientId: 'fasremit-crm',
-      }),
-      puppeteer: {
-        headless: true,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--single-process',
-          '--disable-gpu',
-          '--disable-extensions',
-        ],
-      },
-    });
-
-    waClient.on('qr', async (qr) => {
-      try {
-        const qrDataUrl = await QRCode.toDataURL(qr);
-        updateState({ status: 'QR_PENDING', qrCode: qrDataUrl });
-        console.log('[WA] QR Code generated — awaiting scan');
-      } catch (e) {
-        updateState({ status: 'QR_PENDING', qrCode: null });
-      }
-    });
-
-    waClient.on('authenticated', () => {
-      console.log('[WA] Authenticated');
-      updateState({ status: 'INITIALIZING', qrCode: null });
-    });
-
-    waClient.on('ready', () => {
-      try {
-        const info = waClient.info;
+        if (shouldReconnect) {
+          // Re-initialize socket
+          setTimeout(() => {
+            initWAClient().catch(err => console.error('[WA] Reconnect error:', err));
+          }, 3000);
+        } else {
+          // Logged out: clean up session
+          console.log('[WA] User logged out. Clearing session directory...');
+          try {
+            if (fs.existsSync(SESSION_DIR)) {
+              fs.rmSync(SESSION_DIR, { recursive: true, force: true });
+            }
+          } catch (e) {}
+        }
+      } else if (connection === 'open') {
+        const user = sock.user;
         updateState({
           status: 'CONNECTED',
-          phoneNumber: info?.wid?.user || null,
-          deviceName: info?.pushname || 'Fasremit CRM',
+          phoneNumber: user?.id?.split(':')[0] || null,
+          deviceName: user?.name || 'Fasremit CRM (Baileys)',
           connectedAt: new Date().toISOString(),
           lastSeen: new Date().toISOString(),
         });
-        console.log('[WA] Ready. Connected as:', info?.wid?.user);
-      } catch (e) {
-        updateState({ status: 'CONNECTED', connectedAt: new Date().toISOString() });
+        console.log('[WA] Connected successfully as:', user?.id);
+        isInitializing = false;
       }
     });
 
-    waClient.on('auth_failure', (msg) => {
-      console.error('[WA] Auth failure:', msg);
-      updateState({ status: 'AUTH_FAILURE', qrCode: null });
-      waClient = null;
-    });
-
-    waClient.on('disconnected', (reason) => {
-      console.warn('[WA] Disconnected:', reason);
-      updateState({ status: 'DISCONNECTED', qrCode: null, phoneNumber: null, connectedAt: null });
-      waClient = null;
-    });
-
-    waClient.on('message_ack', () => {
-      updateState({ lastSeen: new Date().toISOString() });
-    });
-
-    await waClient.initialize();
   } catch (err) {
     console.error('[WA] Init failed:', err.message);
     updateState({ status: 'DISCONNECTED' });
-    waClient = null;
+    sock = null;
+    isInitializing = false;
     throw err;
   }
 }
 
 async function logoutWAClient() {
-  if (waClient) {
-    try { await waClient.logout(); } catch (e) {}
-    waClient = null;
+  if (sock) {
+    try { sock.logout(); } catch (e) {}
+    sock = null;
   }
   updateState({ status: 'DISCONNECTED', qrCode: null, phoneNumber: null, deviceName: null, connectedAt: null });
   try {
@@ -224,41 +151,42 @@ async function logoutWAClient() {
       fs.rmSync(SESSION_DIR, { recursive: true, force: true });
     }
   } catch (e) {}
+  isInitializing = false;
 }
 
 // ─── Routes ─────────────────────────────────────────────────────────────────
 
 // Health check
-app.get('/health', (req, res) => {
+appInstance.get('/health', (req, res) => {
   res.json({ status: 'ok', uptime: process.uptime(), waStatus: waState.status });
 });
 
 // GET /status — returns current WA state
-app.get('/status', authMiddleware, (req, res) => {
+appInstance.get('/status', authMiddleware, (req, res) => {
   res.json({ success: true, ...waState });
 });
 
 // POST /connect — trigger WA init
-app.post('/connect', authMiddleware, (req, res) => {
+appInstance.post('/connect', authMiddleware, (req, res) => {
   initWAClient().catch(err => console.error('[WA] Connect error:', err));
   res.json({ success: true, message: 'Menginisialisasi koneksi WA...' });
 });
 
 // POST /logout — disconnect WA
-app.post('/logout', authMiddleware, async (req, res) => {
+appInstance.post('/logout', authMiddleware, async (req, res) => {
   await logoutWAClient();
   res.json({ success: true, message: 'Berhasil logout dari WhatsApp.' });
 });
 
 // POST /send — send a WhatsApp message
-app.post('/send', authMiddleware, async (req, res) => {
+appInstance.post('/send', authMiddleware, async (req, res) => {
   const { phone, message } = req.body;
 
   if (!phone || !message) {
     return res.status(400).json({ success: false, error: 'phone dan message wajib diisi' });
   }
 
-  if (waState.status !== 'CONNECTED' || !waClient) {
+  if (waState.status !== 'CONNECTED' || !sock) {
     return res.status(503).json({ success: false, error: 'WA client tidak terhubung. Silakan scan QR Code terlebih dahulu.' });
   }
 
@@ -266,14 +194,16 @@ app.post('/send', authMiddleware, async (req, res) => {
     let cleanPhone = phone.replace(/[^0-9]/g, '');
     if (cleanPhone.startsWith('0')) cleanPhone = '62' + cleanPhone.slice(1);
     if (!cleanPhone.startsWith('62')) cleanPhone = '62' + cleanPhone;
-    const chatId = `${cleanPhone}@c.us`;
+    
+    // Baileys requires phone format like '62xxx@s.whatsapp.net'
+    const jid = `${cleanPhone}@s.whatsapp.net`;
 
-    const msg = await waClient.sendMessage(chatId, message);
+    const sent = await sock.sendMessage(jid, { text: message });
     updateState({ lastSeen: new Date().toISOString() });
 
     res.json({
       success: true,
-      messageId: msg.id?.id || msg.id?._serialized || `msg_${Date.now()}`,
+      messageId: sent.key.id || `msg_${Date.now()}`,
     });
   } catch (err) {
     console.error('[WA] Send error:', err.message);
@@ -281,15 +211,15 @@ app.post('/send', authMiddleware, async (req, res) => {
   }
 });
 
-// ─── Auto-connect on startup if session exists ───────────────────────────────
-if (fs.existsSync(path.join(SESSION_DIR, 'session-fasremit-crm'))) {
-  console.log('[WA] Found existing session, auto-connecting...');
+// ─── Auto-connect on startup if session folder exists ──────────────────────────
+if (fs.existsSync(SESSION_DIR)) {
+  console.log('[WA] Found existing session folder, auto-connecting...');
   initWAClient().catch(err => console.warn('[WA] Auto-connect failed:', err.message));
 }
 
 // ─── Start Server ───────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`✅ Fasremit WA Gateway running on port ${PORT}`);
+appInstance.listen(PORT, () => {
+  console.log(`✅ Fasremit WA Gateway (Baileys) running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/health`);
   console.log(`   Status: http://localhost:${PORT}/status`);
 });
