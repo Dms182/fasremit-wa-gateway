@@ -76,18 +76,45 @@ async function _doInit() {
 
     // Ensure Chrome is installed in the cache at runtime (fixes Hugging Face mount/discard cache issues)
     const cacheDir = process.env.PUPPETEER_CACHE_DIR || path.join(__dirname, '.puppeteer-cache');
-    const chromeDir = path.join(cacheDir, 'chrome');
-    if (!fs.existsSync(chromeDir) || !fs.existsSync(cacheDir) || fs.readdirSync(cacheDir).length === 0) {
-      console.log('[WA] Chrome not found in cache. Installing Chrome at runtime...');
-      const { execSync } = require('child_process');
-      if (!fs.existsSync(cacheDir)) {
-        fs.mkdirSync(cacheDir, { recursive: true });
+    
+    // Recursive search for "chrome" binary to verify it actually exists and is complete
+    function findChromeExecutable(dir) {
+      if (!fs.existsSync(dir)) return null;
+      const files = fs.readdirSync(dir);
+      for (const file of files) {
+        const fullPath = path.join(dir, file);
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.isDirectory()) {
+            const found = findChromeExecutable(fullPath);
+            if (found) return found;
+          } else if (file === 'chrome' || file === 'chrome.exe') {
+            return fullPath;
+          }
+        } catch (e) {
+          // Ignore permission/read errors for specific files
+        }
       }
+      return null;
+    }
+
+    const chromePath = findChromeExecutable(cacheDir);
+    if (!chromePath) {
+      console.log('[WA] Chrome executable not found in cache. Clean installing Chrome at runtime...');
+      const { execSync } = require('child_process');
+      if (fs.existsSync(cacheDir)) {
+        try {
+          fs.rmSync(cacheDir, { recursive: true, force: true });
+        } catch (e) {}
+      }
+      fs.mkdirSync(cacheDir, { recursive: true });
       execSync('npx puppeteer browsers install chrome', {
         env: { ...process.env, PUPPETEER_CACHE_DIR: cacheDir },
         stdio: 'inherit'
       });
       console.log('[WA] Chrome installation completed successfully!');
+    } else {
+      console.log('[WA] Found Chrome executable in cache at:', chromePath);
     }
 
     if (!fs.existsSync(SESSION_DIR)) {
